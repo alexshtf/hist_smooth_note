@@ -1,0 +1,176 @@
+
+\documentclass[10pt]{article} % For LaTeX2e
+% \usepackage{tmlr}
+% If accepted, instead use the following line for the camera-ready submission:
+\usepackage[preprint]{tmlr}
+% To de-anonymize and remove mentions to TMLR (for example for posting to preprint servers), instead use the following:
+%\usepackage[preprint]{tmlr}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{amsthm}
+\usepackage{graphicx}
+
+
+\newtheorem{theorem}{Theorem}
+
+
+\title{A simple and efficient method for PMF estimation}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the tmlr package is used without the [accepted] or [preprint] options.
+% Non-anonymous submissions will be rejected without review.
+
+% \author{\name Alex Shtoff \email alexander.shtoff@tii.ae \\ Technology Innovation Institute\\}
+\author{\name Alex Shtoff \email alex.shtof@gmail.com}
+
+% The \author macro works with any number of authors. Use \AND 
+% to separate the names and addresses of multiple authors.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\def\month{MM}  % Insert correct month for camera-ready version
+\def\year{YYYY} % Insert correct year for camera-ready version
+\def\openreview{\url{https://openreview.net/forum?id=XXXX}} % Insert correct link to OpenReview for camera-ready version
+
+\DeclareMathOperator{\diag}{diag}
+
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+We introduce a \emph{simple}, \emph{fast}, and \emph{interpretable} non-parametric method to smooth histograms and estimate a probability mass function (PMF) on $[N] = \{0,1, \dots, N - 1\}$. The core idea is to treat the empirical counts as a signal on a line graph and apply a data-dependent low-pass filter. Concretely, we form a symmetric tri-diagonal operator $\mH = \mL - \diag(\vv)$—the path graph Laplacian $\mL$ plus a diagonal bias $\vv$ built from the empirical counts—and then keep only the first $k$ eigenvectors, corresponding to the smallest eigenvalues. Projecting the empirical histogram onto this $k$-dimensional subspace produces a smooth, multi-modal estimate that preserves coarse structure while suppressing noise. A light post-processing step of clipping and re-normalizing produces a valid PMF. Moreover, we show that $k$ has an intuitive meaning - it roughly corresponds to an upper bound on the number of modes we expect the distribution to have. 
+
+Since our main computational workhorse is computing eigenpairs of a symmetric tridiagonal matrix, we stand on the shoulders of the giants who devised and implemented fast and extremely reliable solvers (e.g., \texttt{scipy.linalg.eigh\_tridiagonal}) that run in $O(kN)$ time and $O(N)$ memory for a PMF over $[N]$. Thus, our method scales linearly with $N$, and requires no monitoring and almost no tuning. Thus our method is a principled, transparent, and fast PMF estimator that is easy to implement, tune, and explain.
+
+\end{abstract}
+
+\section{Introduction}
+Estimating a densities from empirical observations is a fundamental problem with applications ranging from visualizing a histogram to complex generative models for images and text. In this work we focus on an extremely simple and fundamental instance - estimating the density of a discrete random variable with support in $[N] = \{0, 1, 2, \ldots, N - 1\}$ from empirical observations. Our primary focus is on a large $N$, between thousands and a few millions, where the density being estimated is multi-modal and ``heavy tailed'' densities. The quotations are because we do not mean heavy tailedness in the classical sense, due to the finite support, but we do mean that a large portion of their mass is spread far away from a small number of areas of concentration.
+
+Examples include, but not limited to, the well-known power-law distributions, such as the Zipf distributions $p(n)\propto (a+n)^{-b}$, their centered variants $p(n) \propto (a + |n - \mu|)^{-b}$, and their mixtures. Such distributions can be naturally obtained from counts, such as token counts in a corpus of documents in the language domain, or the number of page visits in the recommender systems domain. Moreover, high resolution discretizations of continuous quantities, such as the time since the last user interaction with a given item, product prices, network latencies, or ad auction bids also yield similar density families, since the underlying continuous distributions are typically heavy-tailed.
+
+The two most commonly employed univariate density estimators are binned empirical frequencies \citep{binning_pearson}, and kernel density estimation \citep{kde_parzen,kde_rosenblatt}. Both are extensively used in standard data visualization libraries, such as Matplotlib \citep{matplotlib} and Seaborn \citep{seaborn}. However, for heavy-tailed distributions it's hard to determine the right placement of bins to get both a reasonable and aesthetically pleasing distribution, whereas with Kernel density estimator one must set the right kernel and its width hyperparameters, which may be challenging and non-intuitive. 
+
+At first glance, a reasonable estimation technique would be attempting to estimate the density as a mixture of centered Zipf-like distributions described above, i.e., a mixture of atoms of the form $p_i(n) \propto (a_i + |n - \mu_i|)^{-b_i}$ for $i = 1, \dots, K$, where $K$ is a reasonable upper-bound on the number of modes. Alternatively, we may try a kernel-density estimator whose kernel is of the above form, centered around the data points. In the mixture case, fitting the atom parameters together with the mixture weights is a challenging numerical task. Moreover, the actual data may behave differently from this (or any other) parametric model, such as being non-symmetrically spread around the modes. In the case of kernel density, we are not aware of a reasonable heuristic to choose the right hyper-parameters quickly and reliably, and these hyper-parameters are meaningless to a domain expert that may not be well-versed in mathematics.
+
+We believe that a fundamental and extremely simple problem deserves an extremely simple solution. Thus, our main contribution is a simple, non-parametric, and fast method that fits heavy-tailed densities well, and is reliable to compute without tuning or oversight. 
+
+After a short literature review in \Secref{sec:review}, we first present our method in \Secref{sec:method}, and demonstrate its strengths and weaknesses with a few synthetic distributions. Then, in \Secref{sec:analysis} we analyze it mathematically, draw a relationship with related methods from other scientific disciplines, and motivate the meaning of its only hyperparameter, the number of eigen-pairs, as an upper bound on the expected number of modes. Finally, in \Secref{sec:experiments} we demonstrate our method on several data-sets, showing both where it shines and where it does not. The somewhat nonstandard structure, where we show results of experiments on synthetic examples outside of a dedicated experiments section was chosen on purpose, since we believe this is the right way to understand our method.
+
+\section{Previous work}\label{sec:review}
+TODO - literature review. Remind older papers from computer graphics. Talk about mixture estimators and kernel density estimators in general. Say that our method doesn't require complex numerical algorithms and doesn't rely on vague convergence guarantee or specifying non-intuitive hyperparameters in contrast to these.
+
+Talk about Laplacian and Schrodinger eigenmaps. Say that our method is a direct application of these general techniques to density estimation, treating the integers as a path graph, and the empirical frequencies as the potential in order to fit spiky heavy-tailed PMFs. Cite papers both from computer graphics and machine learning. Give proper credit to both fields.
+
+\section{Our method}\label{sec:method}
+To describe our method, we denote by $\Delta_N$ the $N$-dimensional probability simplex, by $[x]_+ = \max(x, 0)$ the positive-part function, and by $\mL$ the \emph{Laplacian} matrix
+\begin{equation}\label{eq:laplacian}
+\mL =\begin{pmatrix}
+    1 & -1 & 0 & 0 & \cdots & 0 \\
+    -1 & 2 & -1 & 0 & \cdots & 0 \\
+    0 & -1 & 2 & -1 & \cdots & 0 \\
+    \vdots & \vdots & \ddots & \ddots & \ddots & \vdots \\
+    0 & 0 & \cdots & -1 & 2 & -1 \\
+    0 & 0 & \cdots & 0 & -1 & 1
+    \end{pmatrix},
+\end{equation}
+which lies at the heart of our method. Note, that $\mL$ is symmetric and tridiagonal.
+
+Having observed samples from $[N]$, the inputs to our method are the vector $\vp \in \Delta_N$ of the empirical sample frequencies, and a small integer $k \in \sN$, e.g., $k = 10$. The method consists of the following four steps:
+\begin{enumerate}
+\item Form the symmetric and tri-diagonal matrix $\mH = \mL - \diag(\vp)$.
+\item Compute the $k$ eigenvectors $\vv_1, \dots, \vv_k$ corresponding to the \emph{smallest} eigenvalues of $\mH$, and place them in the columns of the matrix $\mV = [\vv_1 \vert \vv_2 \vert \cdots \vert \vv_k]$.
+\item Compute $\vu = \mV (\mV^T \vp)$
+\item Return the vector $\vp$ with $\evp_i = [u_i]_+ / \| [\vu]_+ \|_1$.
+\end{enumerate}
+At first glance it may not be obvious why those four steps. Readers may notice that that the third step is merely a projection onto the subspace spanned by the eigenvectors, whereas the fourth step is just a normalization. Consequently, the utility of this specific subspace is the main pillar of our method's fitting performance, whereas having the reliable and efficient tools to compute the eigenvectors is the main pillar of our method's efficiency and reliability.
+
+But before taking a closer look, we would like to draw the readers' attention to Figure \ref{fig:apx_synthetic}, where we demonstrate using synthetic examples where our method shines versus where it does not. It is apparent that ``spiky'' distributions having significant mass both around their modes but also far away are fit well, whereas Gaussian kernel-density estimation falls short. Our method is slighly less suited to wide bell-shaped distributions, in contrast to Gaussian kernel-density estimation that shines in these cases. Finally, our method performs poorly for discontinuous densities, in contrast to kernel-density estimators that, despite fitting poorly, performs gracefully. Our analysis in the next section attempts to explain these empirical phenomena.
+
+\section{The meaning of the eigenvectors}\label{sec:analysis}
+Although our method is a straightforward instance of Schr\"odinger eigenmaps, and we could simply cite that literature, we present a direct, elementary analysis to offer clearer insight and broader accessibility. We rely only on basic linear algebra facts, and adopt the viewpoint of optimizing an objective that balances data fitting and regularization, the bread and butter of modern machine learning. Some steps may be routine for readers familiar with related techniques, but this elementary treatment, in our view, makes the key ideas accessible to a much wider audience.
+
+Recall that any real symmetric matrix always has real eigenvalues, and the corresponding eigenvectors form an orthonormal set. A well-known characterization of the eigenvalues and eigenvectors of symmetric matrices is via minimization of quadratic functions. Formally, we have:
+\begin{theorem}\label{thm:courant_fischer}
+Let $\mA$ be a real symmetric $n \times n$ matrix, let $\lambda_1 \leq \dots \leq\lambda_n$ be its eigenvalues, and let $\ve_1, \dots, \ve_n$ be the corresponding normalized eigenvectors. Then,
+\[
+\ve_k = \argmin_{\vx} \{ \vx^T \mA \vx : \|\vx\|_2 = 1,~\vx^T \ve_1 = 0,~\ldots,~\vx^T \ve_{k-1} = 0 \}.
+\]
+\end{theorem}
+In other words, the eigenvector corresponding to the $k$-th smallest eigenvalue is the unit-norm minimizer the quadratic function $\vx^T \mA \vx$ that is orthogonal to all previous eigenvectors. Even though it is not stated in this form in the literature, this claim typically appears \emph{inside} proofs of the famous Courant-Fischer theorem. See, e.g., proof of Theorem 4.2.8 in \citet{horn2012matrix}.
+
+Now we shall analyze our method. Consider the matrix $\mH = \mL - \diag(\vp)$, where $\mL$ is the Laplacian defined in \eqref{eq:laplacian}, and $\vp$ is the vector of empirical frequencies. By Theorem \ref{thm:courant_fischer}, the eigenvector corresponding to its smallest eigenvalue minimizes the function
+\[
+\vx^T (\mL - \diag(\vp)) \vx = \vx^T \mL \vx - \vx^T \diag(\vp) \vx = \underbrace{\vx^T \mL \vx}_{(*)} + \underbrace{\langle \vx^2, -\vp \rangle}_{(**)},
+\]
+where $\vx^2$ denotes component-wise squaring. To grasp the meaning of $(*)$, consider a variant of the difference matrix
+\[
+\mD = \begin{pmatrix}
+    1 & -1 & 0 & \dots & 0 \\
+    0 & 1 & -1 & \dots & 0 \\
+    \vdots &   & \ddots & \ddots \\
+    0 & \dots & 0 & 1 & -1 \\
+    0 & \dots & 0 & 0 & 0
+\end{pmatrix}.
+\]
+It is easy to verify that $\mL = \mD^T \mD$. Therefore,
+\[
+(*) = \vx^T \mL \vx = \| \mD \vx \|^2,
+\]
+meaning that this is a smoothness term penalizing the squared-norm of the differences between adjacent components of $\vx$. In other words, it is a \emph{regularizer}, and imposes a non-parametric prior of $\vx$ representing a sequence that changes slowly.
+
+The term $(**)$ may appear familiar to machine-learning practitioners - it is the widely used inner-product similarity measure between the vectors $\vx^2$ and $\vp$. It penalizes misalignment between these two vectors, and thus serves as the alignment term between $\vx$ and the empirical frequency.
+
+Intuitively, the first eigenvector just minimizes the balance between these two terms, and thus yields a smooth sequence that captures the over-all shape of the density. The second eigenvector aims to minimize the same balance while being orthogonal to the first, thus it may capture additional more intricate details that were not captured by the first. This pattern repeats for all eigenvectors, each capturing additional details that the previous did not. 
+
+Figure \figref{fig:eigenvectors} demonstrates the eigenvectors obtained from samples coming from various synthetic distributions. We can observe empirically that in a multi-modal distribution, the first eigenvector typically captures the most dominant mode: the data alignment term draws the eigenvector towards the mode, whereas the smoothness penalty makes it discard other less dominant modes. Having captured all dominant modes, the remaining eigenvectors appear as oscillating sequences with increased frequency, with oscillations mostly concentrating around the modes.
+
+This phenomenon is not a coincidence. The eigenvectors of the Laplacian matrix $\mL$ itself are the celebrated Discrete Cosine Transform \citep{the_dct}, which are renowned for their ability to approximate discrete smooth signals using a linear combination of just a few vectors. In contrast to the discrete cosine transform, which is a data-independent basis, the eigenvectors $\vv_1, \dots, \vv_k$ we use in our method are a \emph{data-dependent} basis for smooth approximations. It concentrates its approximation power in a way that is aligned with how the data is distributed.
+
+\begin{figure}[tbh]
+    \centering
+    \includegraphics[width=\textwidth]{eigenvectors}
+    \caption{PMFs, samples, and eigenvectors. The left-most column has the true PMF supported on $0, 1, \dots, 999$ in orange, and empirical frequencies $\vp$ obtained from 500 samples in blue. The next columns depict the first five eigenvectors of $\mL - \diag(\vp)$.}
+    \label{fig:eigenvectors}
+\end{figure}
+
+\Figref{fig:apx_synthetic} continues \figref{fig:eigenvectors}, and depicts the projections of the empirical frequencies onto the space spanned by the first $k$ eigenvectors, for various values of $k$ and two sample sizes. As is apparent, the spiky shape of the heavy-tailed mixtures is nicely captured by the projection. In contrast, a bell-shaped distribution is poorly captured, even with 10 eigenvectors. A distribution with an abruptly changing PMF, the ``Mid plateau'', is a case when our method fails. Moreover, frequencies coming from densities having $k$ spikes are well approximated by roughly $k$ eigenvectors. This reinforces the interpretation of $k$ as, roughly, an upper bound on the expected number of modes. However, wide 
+
+\begin{figure}[tbh]
+    \centering
+    \includegraphics[width=\textwidth]{proj_500_samples}
+    \caption{The projections of the empirical frequencies stemming from 500 samples from $\{0, 1, \dots, 999\}$ onto the first $k$ eigenvectors of $\mL - \diag(\vp)$ for different values of $k$. Rows are various distribution shapes. The first column depicts the empirical histogram along with the true PMF. The next columns depict projections of this empirical frequency vector onto eigenspaces of increasing dimension in blue, the kernel-density estimator obtained by calling \texttt{scipy.stats.
+gaussian\_kde} in purple, and the true density in yellow.}
+    \label{fig:apx_synthetic}
+\end{figure}
+
+To appreciate how our method scales with various sample sizes, we plot the projection onto the first $k=10$ eigenvectors the empirical frequency vectors coming from increasingly large samples in \figref{fig:apx_sample_sizes}. The same behavior persists - the shape of spiky distributions is nicely captured even with a small number of samples. A bell-shaped distribution requires more samples to capture, whereas kernel density-estimation works well even with small samples. And finally, our method is poorly suited in the case of an abruptly changing PMF, the ``Mid plateau''. In contrast, in this case kernel-density estimation, even though it is unable to capture the shape correctly, behaves quite gracefully.
+
+\begin{figure}[tbh]
+    \centering
+    \includegraphics[width=\textwidth]{proj_diff_samples.png}
+    \caption{The projections of the empirical histograms stemming from  samples from $\{0, 1, \dots, 999\}$ of various sizes onto the first $k=10$ eigenvectors of $\mL - \diag(\vp)$. Rows are various distribution shapes. Columns represent sample sizes. Our method in blue, the kernel-density estimator obtained by calling \texttt{scipy.stats.
+    gaussian\_kde} in purple, and the true density in yellow.}
+    \label{fig:apx_sample_sizes}
+\end{figure}
+
+
+\section{Summary and discussion}
+The method we proposed in this paper is simple, fast, and has a reasonably intuitive hyperparameter - the expected number of modes. However, it is extremely basic, and lacks any theoretical guarantee.
+
+It is possible that a better method, with guarantees, can be devised by a different matrix that is not necessarily the Laplacian, or by choosing a different diagonal perturbation that is not necessarily the vector of empirical frequencies. In this manuscript, we do not attempt to suggest that our method is optimal in some sense, only that it's a viable alternative for PMF estimation in an interesting case when the "go-to" method fails.
+
+However, we hope we have inspired researchers into looking for better methods along the lines presented in this paper, and that we have made the idea of constructing a data-dependent basis more accessible to the ML audience.
+
+\bibliography{tmlr}
+\bibliographystyle{tmlr}
+
+
+\end{document}
